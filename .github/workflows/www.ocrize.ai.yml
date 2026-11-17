@@ -1,6 +1,11 @@
 name: www.ocrize.ai
 on:
   workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: www.ocrize.ai-ceph-production
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -15,12 +20,27 @@ jobs:
     - name: Setup Hugo
       uses: peaceiris/actions-hugo@v2
       with:
-          hugo-version: 'latest'
+          hugo-version: '0.125.7'
           extended: true
     - name: Build 
       run: hugo --config "configs/www.ocrize.ai.toml","configs/common.ocrize.ai.toml" -b "https://www.ocrize.ai" --cleanDestinationDir --minify --templateMetrics --templateMetricsHints --enableGitInfo
-    - name: Deploy
-      run: hugo deploy --config "configs/www.ocrize.ai.toml" --maxDeletes=-1 --target "production" --invalidateCDN --force
+    - name: Validate build output
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s public/index.html
+        test -s public/404.html
+    - name: Deploy to Ceph production
       env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.ACCESS_KEY }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.SECRET_ACCESS }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.CEPH_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.CEPH_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: us-east-1
+        AWS_EC2_METADATA_DISABLED: 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -n "$AWS_ACCESS_KEY_ID" || { echo "Missing CEPH_ACCESS_KEY_ID"; exit 1; }
+        test -n "$AWS_SECRET_ACCESS_KEY" || { echo "Missing CEPH_SECRET_ACCESS_KEY"; exit 1; }
+        hugo deploy --config "configs/www.ocrize.ai.toml" --maxDeletes=-1 --target "production_ceph" --invalidateCDN=false --force
+    - name: Verify Ceph website
+      run: python3 scripts/verify-ceph.py --domain www.ocrize.ai
